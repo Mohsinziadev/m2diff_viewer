@@ -107,3 +107,8 @@ export const IconChevronsLeft = (p: IconProps) => (
     <path d="m12.5 4-4 4 4 4M7.5 4l-4 4 4 4" />
   </Svg>
 );
+export const IconCommand = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m3 4.5 3.5 3.5L3 11.5M8.5 11.5h4.5" />
+  </Svg>
+);

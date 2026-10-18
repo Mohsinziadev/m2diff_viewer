@@ -8,6 +8,7 @@ import {
   computeFolds,
   createDiffReport,
   createUnifiedPatch,
+  detectIndent,
   foldContaining,
   intralineRanges,
   searchDiff,
@@ -482,5 +483,14 @@ describe('applyChange', () => {
       { limits: { maxLines: 4 } },
     );
     expect(() => applyChange(t, 0, 'modified')).toThrow(/truncated/);
+  });
+});
+
+describe('detectIndent', () => {
+  it('recognises spaces, tabs and unindented text', () => {
+    expect(detectIndent(['a {', '  b {', '    c', '  }', '}'])).toEqual({ kind: 'spaces', size: 2 });
+    expect(detectIndent(['def f():', '    if x:', '        y'])).toEqual({ kind: 'spaces', size: 4 });
+    expect(detectIndent(['a', '\tb', '\t\tc'])).toEqual({ kind: 'tabs', size: 1 });
+    expect(detectIndent(['a', 'b'])).toBeNull();
   });
 });

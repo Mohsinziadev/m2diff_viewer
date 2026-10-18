@@ -92,3 +92,44 @@ export function describeEol(eol: TextInfo['eol']): string {
       return 'None';
   }
 }
+
+export interface IndentStyle {
+  kind: 'tabs' | 'spaces';
+  /** Spaces per level (for tabs, 1). */
+  size: number;
+}
+
+/**
+ * Guesses the indentation style of a document (like an editor's status bar "Spaces: 2"), from the
+ * most common step between the indentation of consecutive lines. `null` when nothing is indented.
+ */
+export function detectIndent(lines: readonly string[], sample = 2000): IndentStyle | null {
+  let tabs = 0;
+  let spaced = 0;
+  const steps = new Map<number, number>();
+  let prev = 0;
+  for (let i = 0; i < lines.length && i < sample; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    if (line[0] === '\t') tabs++;
+    let n = 0;
+    while (line[n] === ' ') n++;
+    if (n) spaced++;
+    if (line[0] !== '\t') {
+      const step = Math.abs(n - prev);
+      if (step > 1 && step <= 8) steps.set(step, (steps.get(step) ?? 0) + 1);
+      prev = n;
+    }
+  }
+  if (!tabs && !spaced) return null;
+  if (tabs >= spaced) return { kind: 'tabs', size: 1 };
+  let size = 0;
+  let best = 0;
+  for (const [step, count] of steps) if (count > best || (count === best && step < size)) [size, best] = [step, count];
+  return { kind: 'spaces', size: size || 4 };
+}
+
+/** Status-bar label for an indent style: `Spaces: 2` or `Tabs`. */
+export function describeIndent(indent: IndentStyle | null): string {
+  return !indent ? '' : indent.kind === 'tabs' ? 'Tabs' : `Spaces: ${indent.size}`;
+}

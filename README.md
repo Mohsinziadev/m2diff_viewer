@@ -252,8 +252,10 @@ All entries ship ESM and CommonJS builds with type declarations and source maps.
 | `showLineNumbers` | `boolean` | `true` | |
 | `overview` | `boolean` | `true` | Change markers along the right edge |
 | `syncHorizontalScroll` | `boolean` | `true` | Initial state |
+| `selection`, `defaultSelection`, `onSelectionChange` | `LineSelection \| null` | | Lines selected by clicking line numbers: `{ side, start, end }` |
+| `syncHash` | `boolean \| string` | `false` | Mirror the line selection in the URL hash; a string prefixes the hash when a page has several viewers |
 | `connectors` | `boolean` | `true` | Bands and » / « arrows between the side-by-side panes, linking each change to its counterpart |
-| `toolbar` | `boolean \| ToolbarOptions` | `true` | `ToolbarOptions` toggles `navigation`, `view`, `whitespace`, `intraline`, `collapse`, `settings`, `search`, `export`, `language` and `summary` individually |
+| `toolbar` | `boolean \| ToolbarOptions` | `true` | `ToolbarOptions` toggles `navigation`, `view`, `whitespace`, `intraline`, `collapse`, `settings`, `search`, `export`, `commands`, `language` and `summary` individually |
 | `toolbarEnd` | `ReactNode` | | Extra toolbar content |
 | `statusBar` | `boolean` | `true` | Counts, warnings, language and line endings |
 | `renderHeader` | `(info) => ReactNode` | | Replaces the file header row; return `null` to hide it |
@@ -271,7 +273,7 @@ All entries ship ESM and CommonJS builds with type declarations and source maps.
 | `onExport` | `(e: ExportEvent) => boolean \| void` | | Return `false` to handle a copy/download yourself |
 | `onApplyChange` | `(e: ApplyChangeEvent) => void` | | Makes the connector arrows buttons: » copies a change into the modified text, « into the original. `e.target` is the side to update and `e.text` its new content |
 
-**Imperative handle** (`ref`): `result`, `nextChange()`, `previousChange()`, `goToChange(i)`, `expandAll()`, `collapseAll()`, `openSearch(query?)`, `getUnifiedPatch(options?)` and `getReport()`. Use it to build your own controls around a minimal viewer (`toolbar={false} statusBar={false}`); see [examples/custom-toolbar.tsx](examples/custom-toolbar.tsx).
+**Imperative handle** (`ref`): `result`, `nextChange()`, `previousChange()`, `goToChange(i)`, `expandAll()`, `collapseAll()`, `openSearch(query?)`, `openCommandPalette(query?)`, `getUnifiedPatch(options?)` and `getReport()`. Use it to build your own controls around a minimal viewer (`toolbar={false} statusBar={false}`); see [examples/custom-toolbar.tsx](examples/custom-toolbar.tsx).
 
 **Keyboard shortcuts.** These are active while focus is inside the viewer. `Mod` is ⌘ on macOS and Ctrl elsewhere. Override them per action with `keyBindings`, or disable them with `false`.
 
@@ -280,6 +282,15 @@ All entries ship ESM and CommonJS builds with type declarations and source maps.
 | `nextChange` / `previousChange` | `F7`, `Alt+↓` / `Shift+F7`, `Alt+↑` |
 | `openSearch` | `Mod+F` |
 | `nextMatch` / `previousMatch` | `F3`, `Mod+G` / `Shift+F3`, `Mod+Shift+G` (and `Enter` / `Shift+Enter` in the search box) |
+| `commandPalette` | `Mod+K`, `Mod+Shift+P` |
+
+`Esc` clears a line selection.
+
+**Command palette.** Every action in one fuzzy-searchable list: navigation, view, whitespace and highlighting modes, folding, export, merge (with `onApplyChange`), line-selection actions and languages. Start the query with `:` to go to a line (`:42`, `:L42` for the original side, `:R10-20` for a range) or with `#` to jump to a difference. Open it from code with `ref.current.openCommandPalette(query?)`.
+
+**Line links.** Click a line number to select it, shift-click to extend, click again or press `Esc` to clear. With `syncHash`, the selection is mirrored in the URL GitHub-style (`#L12` original, `#R10-R20` modified), so links open with the lines selected and in view.
+
+**Status bar.** Shows `+/−` counts, the current difference (`Diff 2 / 5`, click to pick another), the cursor position (`Ln 42, Col 7`) or line selection, the detected indentation, line endings, the language (click to change it) and how long the comparison took.
 
 Search supports case sensitivity, whole words and regular expressions (an invalid pattern is reported, not thrown), across either or both sides. Moving to a match or a change inside a collapsed region expands it.
 

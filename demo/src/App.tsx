@@ -115,7 +115,8 @@ function CodeDemo({ theme }: { theme: ThemeSetting }) {
         </label>
         {result && <DiffStats result={result} />}
         <span className="demo-hint">
-          Try <kbd>F7</kbd> / <kbd>Shift</kbd>+<kbd>F7</kbd> to move between differences and <kbd>Ctrl/⌘</kbd>+<kbd>F</kbd> to search.
+          Press <kbd>Ctrl/⌘</kbd>+<kbd>K</kbd> for commands, <kbd>F7</kbd> / <kbd>Shift</kbd>+<kbd>F7</kbd> to move between differences, and
+          click line numbers to link to lines.
         </span>
       </div>
       <Inputs original={original} modified={modified} onOriginal={setOriginal} onModified={setModified} />
@@ -132,6 +133,7 @@ function CodeDemo({ theme }: { theme: ThemeSetting }) {
         height="min(72vh, 760px)"
         onDiff={setResult}
         onApplyChange={(e) => (e.target === 'original' ? setOriginal(e.text) : setModified(e.text))}
+        syncHash
       />
     </section>
   );

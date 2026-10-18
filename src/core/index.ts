@@ -4,7 +4,8 @@ export { computeDiffAsync, createWorkerDiffer, handleDiffWorkerMessages } from '
 export type { Differ, WorkerLike, WorkerScopeLike, WorkerDiffer, DiffWorkerRequest, DiffWorkerResponse } from './async';
 export { intralineRanges, mergeRanges } from './intraline';
 export { similarity, profile } from './align';
-export { splitLines, normalizeLine, visualLength, describeEol } from './text';
+export { splitLines, normalizeLine, visualLength, describeEol, detectIndent, describeIndent } from './text';
+export type { IndentStyle } from './text';
 export { computeFolds, buildDisplayItems, foldContaining } from './fold';
 export type { FoldRegion, FoldOptions, DisplayItem } from './fold';
 export { buildInlineItems } from './inline';

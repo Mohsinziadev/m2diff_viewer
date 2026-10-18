@@ -22,7 +22,7 @@ import type { SearchMatch } from '../core/search';
 import type { DiffChange, DiffResult, DiffSide, Range } from '../core/types';
 import { IconChevronsLeft, IconChevronsRight } from './icons';
 import type { TokenSource } from './useSyntaxTokens';
-import { cx } from './utils';
+import { cx, prefersReducedMotion } from './utils';
 
 // Server render uses the plain effect (layout effects warn there); the browser measures before paint.
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -35,6 +35,54 @@ export interface ViewHandle {
   /** Scrolls to a fraction (0–1) of the content height. */
   scrollToFraction(f: number): void;
   focus(): void;
+}
+
+/** A range of line numbers (inclusive) on one side, e.g. from clicking line numbers. */
+export interface LineSelection {
+  side: DiffSide;
+  start: number;
+  end: number;
+}
+
+const inSelection = (sel: LineSelection | null, side: DiffSide, line: number | undefined) =>
+  !!sel && line !== undefined && sel.side === side && line >= sel.start && line <= sel.end;
+
+/** Text-cursor position inside the panes, for the status bar. */
+export interface Caret {
+  side: DiffSide;
+  line: number;
+  /** 1-based column (UTF-16 code units). */
+  col: number;
+  /** Lines spanned by the text selection on the same side (1 when nothing is selected across lines). */
+  lines: number;
+}
+
+/** Reads where the DOM text selection's focus sits in the viewer, or `null` outside the code. */
+export function readCaret(sel: Selection | null): Caret | null {
+  const node = sel?.focusNode;
+  if (!sel || !node) return null;
+  const el = node.nodeType === 1 ? (node as Element) : node.parentElement;
+  const row = el?.closest<HTMLElement>('[data-line]');
+  const code = el?.closest('.m2d-code');
+  if (!row || !code || !row.dataset.side) return null;
+  let col = 0;
+  if (node.nodeType === 3) {
+    const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      if (t.parentElement?.closest('.m2d-sr-only')) continue;
+      if (t === node) {
+        col += sel.focusOffset;
+        break;
+      }
+      col += t.textContent?.length ?? 0;
+    }
+  }
+  const anchorEl = sel.anchorNode?.nodeType === 1 ? (sel.anchorNode as Element) : sel.anchorNode?.parentElement;
+  const anchorRow = anchorEl?.closest<HTMLElement>('[data-line]');
+  const side = row.dataset.side as DiffSide;
+  const line = Number(row.dataset.line);
+  const lines = anchorRow?.dataset.side === side ? Math.abs(Number(anchorRow.dataset.line) - line) + 1 : 1;
+  return { side, line, col: col + 1, lines };
 }
 
 export interface ViewportInfo {
@@ -126,8 +174,6 @@ function useWindow(count: number, rowHeight: number, virtualize: boolean) {
   const safe: Window = virtualize ? { start: Math.min(win.start, count), end: Math.min(win.end, count) } : { start: 0, end: count };
   return [safe, update] as const;
 }
-
-const prefersReducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 function scrollIntoRange(el: HTMLElement | null, item: number, rowHeight: number) {
   if (!el) return;
@@ -247,6 +293,8 @@ export interface ViewProps {
   activeChange: number;
   /** Change briefly flashed after navigating to it (-1 for none). */
   flashChange: number;
+  /** Lines selected through the line numbers. */
+  selection: LineSelection | null;
   onExpandFold: (id: number) => void;
   onViewport: (info: ViewportInfo) => void;
   labels: { original: string; modified: string };
@@ -624,11 +672,14 @@ function SplitCell(props: ViewProps & { index: number; side: DiffSide; hoverChan
         change && change.index === activeChange && 'm2d-current',
         change && change.index === flashChange && 'm2d-flash',
         change && change.index === hoverChange && linkedClass(index === change.rowStart, index === change.rowEnd - 1),
+        inSelection(props.selection, side, line.number) && 'm2d-selected',
         props.rowClassName,
       )}
       style={{ height: rowHeight }}
       data-row={index}
       data-change={change?.index}
+      data-side={side}
+      data-line={line.number}
     >
       <span
         className="m2d-gutter"
@@ -712,11 +763,15 @@ export const InlineView = forwardRef<ViewHandle, InlineViewProps>(function Inlin
           inChange && item.change === activeChange && 'm2d-current',
           inChange && item.change === flashChange && 'm2d-flash',
           inChange && item.change === hover && linkedClass(!sameChange(prev), !sameChange(next)),
+          (inSelection(props.selection, 'original', item.oldNumber) || inSelection(props.selection, 'modified', item.newNumber)) &&
+            'm2d-selected',
           props.rowClassName,
         )}
         style={{ height: rowHeight }}
         data-row={item.row}
         data-change={inChange ? item.change : undefined}
+        data-side={side}
+        data-line={lineNo}
       >
         <span
           className="m2d-gutter m2d-gutter-2"

@@ -9,6 +9,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - Side-by-side connector strip: curved bands link each change block across the panes, with » / « arrows like an IDE merge view. Turn it off with `connectors={false}`.
 - Linked hover: pointing at a change (in either pane, or at its band or arrows) frames that block in both panes and highlights its band. Clicking a band selects the change.
 - Moving between changes scrolls smoothly (instant with `prefers-reduced-motion`) and briefly flashes the change it lands on.
+- Command palette (`Mod+K` / `Mod+Shift+P`, toolbar button, `openCommandPalette()`): fuzzy search over every action, `:` to go to a line, `#` to jump to a difference, recently used commands first.
+- Line links: click line numbers to select (shift-click extends); `selection`/`onSelectionChange` props and `syncHash` for GitHub-style `#L12` / `#R10-R20` URLs.
+- IDE-style status bar: `Diff 2 / 5` picker, cursor `Ln, Col`, line selection, detected indentation (`detectIndent` in core), clickable language and comparison time (`useDiff` now returns `duration`).
 - `onApplyChange` on `<DiffViewer>` turns the arrows into buttons that copy a change to the other side; `applyChange(result, index, target)` in `m2diff-viewer/core` computes the new text.
 
 ## 0.1.0

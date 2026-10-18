@@ -22,7 +22,11 @@ export interface UseDiffState {
   /** A newer comparison is running. */
   pending: boolean;
   error: Error | null;
+  /** Wall-clock milliseconds the latest committed comparison took (`null` before the first one). */
+  duration: number | null;
 }
+
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 const optionsKey = (o: DiffOptions | undefined) =>
   o ? JSON.stringify([o.ignoreWhitespace, o.ignoreCase, o.lineEndings, o.intraline, o.limits ?? null]) : '';
@@ -45,10 +49,12 @@ export function useDiff(
 
   const sync = useMemo<UseDiffState | null>(() => {
     if (isAsync) return null;
+    const start = now();
     try {
-      return { result: computeDiff(original, modified, options), pending: false, error: null };
+      const result = computeDiff(original, modified, options);
+      return { result, pending: false, error: null, duration: now() - start };
     } catch (e) {
-      return { result: null, pending: false, error: e instanceof Error ? e : new Error(String(e)) };
+      return { result: null, pending: false, error: e instanceof Error ? e : new Error(String(e)), duration: null };
     }
     // `options` is tracked through its serialised key and compareKeys identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -57,22 +63,24 @@ export function useDiff(
   // Identity of the current async request; a committed result is "pending" until it answers this one.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const request = useMemo(() => ({}), [isAsync, differ, original, modified, key, compareKeys]);
-  const [asyncState, setAsyncState] = useState<{ result: DiffResult | null; error: Error | null; for: object | null }>({
-    result: null,
-    error: null,
-    for: null,
-  });
+  const [asyncState, setAsyncState] = useState<{
+    result: DiffResult | null;
+    error: Error | null;
+    duration: number | null;
+    for: object | null;
+  }>({ result: null, error: null, duration: null, for: null });
 
   useEffect(() => {
     if (!isAsync) return;
     const ctrl = new AbortController();
+    const start = now();
     (differ ?? computeDiffAsync)(original, modified, options, ctrl.signal).then(
       (result) => {
-        if (!ctrl.signal.aborted) setAsyncState({ result, error: null, for: request });
+        if (!ctrl.signal.aborted) setAsyncState({ result, error: null, duration: now() - start, for: request });
       },
       (error: unknown) => {
         if (ctrl.signal.aborted || (error as Error)?.name === 'AbortError') return;
-        setAsyncState((s) => ({ result: s.result, error: error instanceof Error ? error : new Error(String(error)), for: request }));
+        setAsyncState((s) => ({ ...s, error: error instanceof Error ? error : new Error(String(error)), for: request }));
       },
     );
     return () => ctrl.abort();
@@ -80,5 +88,5 @@ export function useDiff(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
 
-  return sync ?? { result: asyncState.result, error: asyncState.error, pending: asyncState.for !== request };
+  return sync ?? { result: asyncState.result, error: asyncState.error, duration: asyncState.duration, pending: asyncState.for !== request };
 }

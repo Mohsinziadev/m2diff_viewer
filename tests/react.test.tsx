@@ -133,6 +133,129 @@ describe('<DiffViewer> change connectors', () => {
   });
 });
 
+describe('<DiffViewer> command palette', () => {
+  const A = 'a\nb\nc\nd\ne\n';
+  const B = 'a\nB\nc\nd\nE\nf\n';
+
+  it('opens with Ctrl+K, filters fuzzily, runs a command and restores focus', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DiffViewer original={A} modified={B} collapseUnchanged={false} />);
+    const pane = container.querySelector<HTMLElement>('.m2d-pane-old')!;
+    pane.focus();
+    await user.keyboard('{Control>}k{/Control}');
+    const input = screen.getByRole('combobox', { name: 'Command' });
+    expect(input).toHaveFocus();
+    await user.type(input, 'view unif');
+    const options = within(screen.getByRole('listbox')).getAllByRole('option');
+    expect(options[0]).toHaveTextContent('View: Unified patch');
+    expect(options[0]).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    expect(container.querySelector('.m2d-root')).toHaveAttribute('data-view', 'unified');
+  });
+
+  it('closes with Escape and returns focus to where it was', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DiffViewer original={A} modified={B} />);
+    const pane = container.querySelector<HTMLElement>('.m2d-pane-new')!;
+    pane.focus();
+    await user.keyboard('{Control>}{Shift>}p{/Shift}{/Control}');
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(pane).toHaveFocus();
+  });
+
+  it('jumps to a difference with # and to a line with :', async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    const onSelectionChange = vi.fn();
+    const ref = createRef<DiffViewerHandle>();
+    const { container } = render(
+      <DiffViewer
+        ref={ref}
+        original={A}
+        modified={B}
+        collapseUnchanged={false}
+        onNavigate={onNavigate}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    act(() => ref.current!.openCommandPalette('#'));
+    expect(
+      within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual(['Modified: Difference 1L2 → R2', 'Modified: Difference 2L5 → R5–6']);
+    await user.type(screen.getByRole('combobox', { name: 'Command' }), '2{Enter}');
+    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ changeIndex: 1 }));
+    expect(container.querySelector('.m2d-status-btn')).toHaveTextContent('Diff 2 / 2');
+
+    act(() => ref.current!.openCommandPalette(':'));
+    await user.type(screen.getByRole('combobox', { name: 'Command' }), 'R6');
+    expect(within(screen.getByRole('listbox')).getByRole('option')).toHaveTextContent('Modified line 6');
+    await user.keyboard('{Enter}');
+    expect(onSelectionChange).toHaveBeenLastCalledWith({ side: 'modified', start: 6, end: 6 });
+    expect(container.querySelector('.m2d-pane-new [data-line="6"]')).toHaveClass('m2d-selected');
+    expect(container.querySelector('.m2d-status-selection')).toHaveTextContent('RLn 6');
+
+    act(() => ref.current!.openCommandPalette(':'));
+    await user.type(screen.getByRole('combobox', { name: 'Command' }), '99');
+    expect(
+      within(screen.getByRole('listbox'))
+        .getAllByRole('option')
+        .every((o) => o.getAttribute('aria-disabled') === 'true'),
+    ).toBe(true);
+  });
+
+  it('shows search-only commands such as languages once something is typed', async () => {
+    const user = userEvent.setup();
+    const ref = createRef<DiffViewerHandle>();
+    render(<DiffViewer ref={ref} original={A} modified={B} />);
+    act(() => ref.current!.openCommandPalette());
+    expect(within(screen.getByRole('listbox')).queryByRole('option', { name: /Language:/ })).toBeNull();
+    await user.type(screen.getByRole('combobox', { name: 'Command' }), 'language: pyth');
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')[0]).toHaveTextContent('Language: Python');
+  });
+});
+
+describe('<DiffViewer> line links and status bar', () => {
+  const A = 'a\nb\nc\nd\n';
+  const B = 'a\nb\nC\nd\n';
+
+  it('selects lines from the gutter, extends with shift and mirrors the URL hash', () => {
+    window.history.replaceState(null, '', '/');
+    const { container } = render(<DiffViewer original={A} modified={B} collapseUnchanged={false} syncHash />);
+    const gutter = (side: string, line: number) => container.querySelector(`.m2d-pane-${side} [data-line="${line}"] .m2d-gutter`)!;
+    fireEvent.click(gutter('new', 2));
+    expect(window.location.hash).toBe('#R2');
+    fireEvent.click(gutter('new', 4), { shiftKey: true });
+    expect(window.location.hash).toBe('#R2-R4');
+    expect(container.querySelectorAll('.m2d-pane-new .m2d-selected')).toHaveLength(3);
+    expect(container.querySelectorAll('.m2d-pane-old .m2d-selected')).toHaveLength(0);
+    fireEvent.keyDown(container.querySelector('.m2d-pane-new')!, { key: 'Escape' });
+    expect(container.querySelector('.m2d-selected')).toBeNull();
+    expect(window.location.hash).toBe('');
+  });
+
+  it('selects the lines named in the hash on load', () => {
+    window.history.replaceState(null, '', '/#cmp-L1-L2');
+    const { container } = render(<DiffViewer original={A} modified={B} collapseUnchanged={false} syncHash="cmp-" />);
+    expect([...container.querySelectorAll('.m2d-selected')].map((r) => (r as HTMLElement).dataset.line)).toEqual(['1', '2']);
+    window.history.replaceState(null, '', '/');
+  });
+
+  it('shows indentation, comparison time and a clickable language', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<DiffViewer original={'if x:\n    y\n'} modified={'if x:\n    z\n'} language="python" />);
+    const status = container.querySelector('.m2d-status')!;
+    expect(status).toHaveTextContent('Spaces: 4');
+    expect(status.querySelector('.m2d-status-time')?.textContent).toMatch(/ms$/);
+    await user.click(within(status as HTMLElement).getByRole('button', { name: 'Python' }));
+    expect(screen.getByRole('combobox', { name: 'Command' })).toHaveValue('Language: ');
+  });
+});
+
 describe('<DiffViewer> inline and unified views', () => {
   it('lists removed lines before added lines in inline view', () => {
     const { container } = render(

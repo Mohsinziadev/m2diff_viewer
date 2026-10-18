@@ -9,6 +9,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
 import type { Differ } from '../core/async';
@@ -20,20 +21,44 @@ import { applyChange } from '../core/merge';
 import { createUnifiedPatch, type PatchOptions } from '../core/patch';
 import { createDiffReport, type DiffReport } from '../core/report';
 import { searchDiff, type SearchMatch, type SearchScope } from '../core/search';
-import { describeEol, visualLength } from '../core/text';
+import { describeEol, describeIndent, detectIndent, visualLength } from '../core/text';
 import type { DiffChange, DiffOptions, DiffResult, DiffSide, IntralineMode, LineEndingMode, WhitespaceMode } from '../core/types';
 import { IconButton, OverviewRuler, Popover, SearchBar, Select, type OverviewHandle, type OverviewMarker } from './chrome';
-import { IconArrowDown, IconArrowUp, IconCheck, IconExport, IconFold, IconSearch, IconSettings, IconUnfold, IconWarning } from './icons';
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconCheck,
+  IconCommand,
+  IconExport,
+  IconFold,
+  IconSearch,
+  IconSettings,
+  IconUnfold,
+  IconWarning,
+} from './icons';
+import { CommandPalette, filterCommands, type PaletteCommand, type PaletteItem } from './palette';
 import { useDiff } from './useDiff';
 import { useSyntaxTokens } from './useSyntaxTokens';
 import { copyText, cx, describeBinding, downloadText, matchesBinding, useControllableState } from './utils';
-import { CONNECTOR_WIDTH, InlineView, PatchView, SplitView, type ViewHandle, type ViewportInfo } from './views';
+import {
+  CONNECTOR_WIDTH,
+  InlineView,
+  PatchView,
+  SplitView,
+  readCaret,
+  type Caret,
+  type LineSelection,
+  type ViewHandle,
+  type ViewportInfo,
+} from './views';
+
+export type { LineSelection };
 
 export type ViewMode = 'split' | 'inline' | 'unified';
 export type ViewModeSetting = ViewMode | 'auto';
 export type ThemeSetting = 'light' | 'dark' | 'auto';
 
-export type DiffAction = 'nextChange' | 'previousChange' | 'openSearch' | 'nextMatch' | 'previousMatch';
+export type DiffAction = 'nextChange' | 'previousChange' | 'openSearch' | 'nextMatch' | 'previousMatch' | 'commandPalette';
 export type KeyBindings = Record<DiffAction, string[]>;
 
 /** Default shortcuts; active while focus is inside the viewer. `Mod` is ⌘ on macOS, Ctrl elsewhere. */
@@ -43,6 +68,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   openSearch: ['Mod+F'],
   nextMatch: ['F3', 'Mod+G'],
   previousMatch: ['Shift+F3', 'Mod+Shift+G'],
+  commandPalette: ['Mod+K', 'Mod+Shift+P'],
 };
 
 export interface ToolbarOptions {
@@ -65,6 +91,8 @@ export interface ToolbarOptions {
   language?: boolean;
   /** "N differences" summary. */
   summary?: boolean;
+  /** Command palette button (the shortcut works regardless). */
+  commands?: boolean;
 }
 
 export type ExportAction = 'copy-original' | 'copy-modified' | 'copy-patch' | 'download-diff' | 'download-patch' | 'download-report';
@@ -146,6 +174,19 @@ export interface DiffViewerProps {
    * text, « the other way. The viewer is controlled, so update `original`/`modified` with `event.text`.
    */
   onApplyChange?: (event: ApplyChangeEvent) => void;
+  /**
+   * Lines selected by clicking line numbers (shift-click extends). Controlled with `onSelectionChange`;
+   * omit for uncontrolled (`defaultSelection`).
+   */
+  selection?: LineSelection | null;
+  defaultSelection?: LineSelection | null;
+  onSelectionChange?: (selection: LineSelection | null) => void;
+  /**
+   * Mirror the line selection in the URL hash, GitHub style: `#L12` (original), `#R10-R20` (modified).
+   * Opening such a link selects and reveals the lines. Pass a string to prefix the hash when a page
+   * has several viewers (`'cart-'` → `#cart-R12`). Default false.
+   */
+  syncHash?: boolean | string;
   /** Sync horizontal scrolling of the two panes (initial state). Default true. */
   syncHorizontalScroll?: boolean;
 
@@ -191,6 +232,8 @@ export interface DiffViewerHandle {
   expandAll(): void;
   collapseAll(): void;
   openSearch(query?: string): void;
+  /** Opens the command palette, optionally with a query (`:` go to line, `#` differences). */
+  openCommandPalette(query?: string): void;
   getUnifiedPatch(options?: PatchOptions): string;
   getReport(): DiffReport | null;
 }
@@ -217,6 +260,12 @@ const VIEW_OPTIONS: ReadonlyArray<{ value: ViewModeSetting; label: string }> = [
   { value: 'unified', label: 'Unified patch' },
   { value: 'auto', label: 'Auto' },
 ];
+
+const formatDuration = (ms: number) => (ms < 1 ? '<1 ms' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+const sideName = (side: DiffSide) => (side === 'original' ? 'Original' : 'Modified');
+const sideLetter = (side: DiffSide) => (side === 'original' ? 'L' : 'R');
+const span = (start: number, count: number) => (count ? (count > 1 ? `${start}–${start + count - 1}` : `${start}`) : '—');
+const MAX_RECENT = 5;
 
 const baseName = (name: string | undefined) => (name ? (name.split(/[\\/]/).pop() ?? name) : undefined);
 
@@ -277,6 +326,16 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
   const [activeHunk, setActiveHunk] = useState(-1);
   const [announcement, setAnnouncement] = useState('');
   const [copied, setCopied] = useState<ExportAction | null>(null);
+  const [palette, setPalette] = useState<{ open: boolean; query: string }>({ open: false, query: '' });
+  const paletteOpener = useRef<HTMLElement | null>(null);
+  const [recentCommands, setRecentCommands] = useState<string[]>([]);
+  const [caret, setCaret] = useState<Caret | null>(null);
+  const [selection, setSelection] = useControllableState<LineSelection | null>(
+    props.selection,
+    props.defaultSelection ?? null,
+    props.onSelectionChange,
+  );
+  const selectionAnchor = useRef<number | null>(null);
   const [search, setSearch] = useState({
     open: false,
     query: '',
@@ -313,7 +372,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
   const searchInput = useRef<HTMLInputElement>(null);
 
   // ——— comparison ———————————————————————————————————————————————
-  const { result, pending, error } = useDiff(original, modified, { options, differ });
+  const { result, pending, error, duration } = useDiff(original, modified, { options, differ });
 
   useEffect(() => {
     if (result) onDiff?.(result);
@@ -521,6 +580,114 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
     [result, onApplyChange],
   );
 
+  // ——— line selection & URL hash ——————————————————————————————————
+  const hashPrefix = props.syncHash === true ? '' : typeof props.syncHash === 'string' ? props.syncHash : null;
+  const lineRows = useMemo(() => {
+    const oldRows = new Int32Array((result?.original.lines.length ?? 0) + 1).fill(-1);
+    const newRows = new Int32Array((result?.modified.lines.length ?? 0) + 1).fill(-1);
+    result?.rows.forEach((r, i) => {
+      if (r.old) oldRows[r.old.number] = i;
+      if (r.new) newRows[r.new.number] = i;
+    });
+    return { original: oldRows, modified: newRows };
+  }, [result]);
+
+  const formatHash = useCallback(
+    (sel: LineSelection) =>
+      `${hashPrefix}${sideLetter(sel.side)}${sel.start}${sel.end !== sel.start ? `-${sideLetter(sel.side)}${sel.end}` : ''}`,
+    [hashPrefix],
+  );
+  const parseHash = useCallback(
+    (hash: string): LineSelection | null => {
+      if (hashPrefix === null) return null;
+      let h = hash.replace(/^#/, '');
+      try {
+        h = decodeURIComponent(h);
+      } catch {
+        return null;
+      }
+      if (!h.startsWith(hashPrefix)) return null;
+      const m = /^([LR])(\d+)(?:-[LR]?(\d+))?$/.exec(h.slice(hashPrefix.length));
+      if (!m) return null;
+      const a = Number(m[2]);
+      const b = m[3] ? Number(m[3]) : a;
+      return { side: m[1] === 'L' ? 'original' : 'modified', start: Math.min(a, b), end: Math.max(a, b) };
+    },
+    [hashPrefix],
+  );
+
+  /** Changes the line selection from a user action, mirroring it in the URL hash and optionally scrolling to it. */
+  const selectLines = useCallback(
+    (sel: LineSelection | null, scroll = false) => {
+      let next = sel;
+      if (sel && result) {
+        const count = (sel.side === 'original' ? result.original : result.modified).lines.length;
+        if (!count) return;
+        const start = Math.max(1, Math.min(count, sel.start));
+        const end = Math.max(start, Math.min(count, sel.end));
+        next = { side: sel.side, start, end };
+      }
+      setSelection(next);
+      if (hashPrefix !== null && typeof window !== 'undefined') {
+        const want = next ? `#${formatHash(next)}` : '';
+        const ours = parseHash(window.location.hash) !== null;
+        if (next ? window.location.hash !== want : ours) {
+          window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
+        }
+      }
+      if (next && scroll) {
+        const row = lineRows[next.side][next.start];
+        if (row >= 0) reveal(row, next.side);
+      }
+    },
+    [result, setSelection, hashPrefix, formatHash, parseHash, lineRows, reveal],
+  );
+
+  // Select the lines named in the URL hash on load and when it changes.
+  const hashRead = useRef(false);
+  useEffect(() => {
+    if (hashPrefix === null || !result || typeof window === 'undefined') return;
+    const apply = () => {
+      const sel = parseHash(window.location.hash);
+      if (sel) selectLines(sel, true);
+    };
+    if (!hashRead.current) {
+      hashRead.current = true;
+      apply();
+    }
+    window.addEventListener('hashchange', apply);
+    return () => window.removeEventListener('hashchange', apply);
+  }, [hashPrefix, result, parseHash, selectLines]);
+
+  // Clicking a line number selects that line; shift-click extends from the last clicked line.
+  const onBodyClick = (e: ReactMouseEvent<HTMLDivElement>) => {
+    const gutter = e.target instanceof Element ? e.target.closest('.m2d-gutter') : null;
+    const row = gutter?.closest<HTMLElement>('[data-line]');
+    if (!row) return;
+    const side = row.dataset.side as DiffSide;
+    const line = Number(row.dataset.line);
+    if (e.shiftKey && selection?.side === side && selectionAnchor.current !== null) {
+      const a = selectionAnchor.current;
+      selectLines({ side, start: Math.min(a, line), end: Math.max(a, line) });
+      return;
+    }
+    selectionAnchor.current = line;
+    const same = selection?.side === side && selection.start === line && selection.end === line;
+    selectLines(same ? null : { side, start: line, end: line });
+  };
+  const onBodyMouseUp = () => {
+    if (typeof window !== 'undefined') setCaret(readCaret(window.getSelection()));
+  };
+
+  const selectedText = (withNumbers: boolean) => {
+    if (!result || !selection) return '';
+    const lines = (selection.side === 'original' ? result.original : result.modified).lines.slice(selection.start - 1, selection.end);
+    const width = String(selection.end).length;
+    return lines.map((l, i) => (withNumbers ? `${String(selection.start + i).padStart(width)}  ${l}` : l)).join('\n') + '\n';
+  };
+  const copyWithNotice = async (text: string, what: string) =>
+    announce((await copyText(text)) ? `Copied ${what}` : `Could not copy ${what}`);
+
   const current = view === 'unified' ? activeHunk : activeChange;
   const total = view === 'unified' ? hunkLines.length : (result?.changes.length ?? 0);
   const nextChange = useCallback(() => goToChange(current < 0 ? 0 : current + 1), [goToChange, current]);
@@ -544,6 +711,10 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
       searchInput.current?.focus();
       searchInput.current?.select();
     }, 0);
+  }, []);
+  const openCommandPalette = useCallback((query = '') => {
+    paletteOpener.current = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+    setPalette({ open: true, query });
   }, []);
   const closeSearch = () => {
     setSearch((s) => ({ ...s, open: false }));
@@ -598,10 +769,12 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
     [props.keyBindings],
   );
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!bindings || e.defaultPrevented) return;
+    if (!bindings || e.defaultPrevented || palette.open) return;
     const hit = (action: DiffAction) => bindings[action]?.some((b) => matchesBinding(e, b));
     let handled = true;
-    if (hit('nextChange')) nextChange();
+    if (hit('commandPalette')) openCommandPalette();
+    else if (e.key === 'Escape' && selection) selectLines(null);
+    else if (hit('nextChange')) nextChange();
     else if (hit('previousChange')) previousChange();
     else if (hit('openSearch') && toolbarOn('search')) openSearch();
     else if (hit('nextMatch') && search.open) goToMatch(activeMatchIndex + 1);
@@ -622,10 +795,23 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
       expandAll,
       collapseAll,
       openSearch,
+      openCommandPalette,
       getUnifiedPatch: (o) => (result ? createUnifiedPatch(result, { ...patchOptions, ...o }) : ''),
       getReport: () => (result ? createDiffReport(result, { original: originalName, modified: modifiedName }) : null),
     }),
-    [result, nextChange, previousChange, goToChange, expandAll, collapseAll, openSearch, patchOptions, originalName, modifiedName],
+    [
+      result,
+      nextChange,
+      previousChange,
+      goToChange,
+      expandAll,
+      collapseAll,
+      openSearch,
+      openCommandPalette,
+      patchOptions,
+      originalName,
+      modifiedName,
+    ],
   );
 
   // ——— overview ————————————————————————————————————————————————
@@ -717,12 +903,264 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
     activeMatch,
     activeChange,
     flashChange,
+    selection,
     onExpandFold: expandFold,
     onViewport,
     labels,
     contentCh,
     renderFoldLabel: props.renderFoldLabel,
     rowClassName: classNames.row,
+  };
+
+  // ——— command palette ——————————————————————————————————————————————
+  const indent = useMemo(() => {
+    const lines = result?.modified.present ? result.modified.lines : result?.original.lines;
+    return lines ? detectIndent(lines) : null;
+  }, [result]);
+
+  const key = (action: DiffAction) => (bindings?.[action]?.[0] ? describeBinding(bindings[action][0]) : undefined);
+
+  const buildCommands = (): PaletteCommand[] => {
+    const cmds: PaletteCommand[] = [];
+    const add = (c: PaletteCommand) => cmds.push(c);
+    const hasChanges = total > 0;
+    add({ id: 'nav.next', group: 'Go', title: 'Next difference', shortcut: key('nextChange'), disabled: !hasChanges, run: nextChange });
+    add({
+      id: 'nav.prev',
+      group: 'Go',
+      title: 'Previous difference',
+      shortcut: key('previousChange'),
+      disabled: !hasChanges,
+      run: previousChange,
+    });
+    add({ id: 'nav.first', group: 'Go', title: 'First difference', disabled: !hasChanges, run: () => goToChange(0) });
+    add({ id: 'nav.last', group: 'Go', title: 'Last difference', disabled: !hasChanges, run: () => goToChange(total - 1) });
+    if (view !== 'unified') {
+      add({
+        id: 'nav.diff',
+        group: 'Go',
+        title: 'Go to difference…',
+        detail: '#',
+        stay: true,
+        run: () => setPalette((p) => ({ ...p, query: '#' })),
+      });
+      add({
+        id: 'nav.line',
+        group: 'Go',
+        title: 'Go to line…',
+        detail: ':',
+        stay: true,
+        run: () => setPalette((p) => ({ ...p, query: ':' })),
+      });
+    }
+    add({
+      id: 'search',
+      group: 'Find',
+      title: 'Search in both sides',
+      shortcut: key('openSearch'),
+      keywords: 'find',
+      run: () => openSearch(),
+    });
+    if (canApply && activeChange >= 0 && view !== 'unified') {
+      add({
+        id: 'merge.toModified',
+        group: 'Merge',
+        title: `Apply difference ${activeChange + 1} to modified »`,
+        run: () => applyChangeTo(activeChange, 'modified'),
+      });
+      add({
+        id: 'merge.toOriginal',
+        group: 'Merge',
+        title: `Apply difference ${activeChange + 1} to original «`,
+        run: () => applyChangeTo(activeChange, 'original'),
+      });
+    }
+    if (selection) {
+      const where = `${sideLetter(selection.side)}${span(selection.start, selection.end - selection.start + 1)}`;
+      add({
+        id: 'sel.copy',
+        group: 'Selection',
+        title: 'Copy selected lines',
+        detail: where,
+        run: () => void copyWithNotice(selectedText(false), 'selected lines'),
+      });
+      add({
+        id: 'sel.copyNumbers',
+        group: 'Selection',
+        title: 'Copy selected lines with line numbers',
+        detail: where,
+        run: () => void copyWithNotice(selectedText(true), 'selected lines'),
+      });
+      if (hashPrefix !== null && typeof window !== 'undefined') {
+        const url = `${window.location.href.split('#')[0]}#${formatHash(selection)}`;
+        add({
+          id: 'sel.link',
+          group: 'Selection',
+          title: 'Copy link to selected lines',
+          detail: where,
+          keywords: 'url permalink share',
+          run: () => void copyWithNotice(url, 'link'),
+        });
+      }
+      add({ id: 'sel.clear', group: 'Selection', title: 'Clear line selection', shortcut: 'Esc', run: () => selectLines(null) });
+    }
+    if (viewSettable) {
+      for (const o of VIEW_OPTIONS)
+        add({ id: `view.${o.value}`, group: 'View', title: o.label, checked: viewSetting === o.value, run: () => setView(o.value) });
+    }
+    if (view !== 'unified') {
+      add({
+        id: 'fold.expand',
+        group: 'View',
+        title: 'Expand all unchanged lines',
+        disabled: !hiddenFolds,
+        keywords: 'unfold',
+        run: expandAll,
+      });
+      add({ id: 'fold.collapse', group: 'View', title: 'Collapse unchanged lines', keywords: 'fold', run: collapseAll });
+    }
+    if (view === 'split') {
+      add({
+        id: 'view.syncH',
+        group: 'View',
+        title: 'Sync horizontal scrolling',
+        checked: syncHorizontal,
+        run: () => setSyncHorizontal(!syncHorizontal),
+      });
+    }
+    if (optionsSettable) {
+      for (const o of WHITESPACE_OPTIONS) {
+        add({
+          id: `ws.${o.value}`,
+          group: 'Whitespace',
+          title: o.label,
+          checked: (options.ignoreWhitespace ?? 'none') === o.value,
+          run: () => setOptions({ ...options, ignoreWhitespace: o.value }),
+        });
+      }
+      if (view !== 'unified') {
+        for (const o of INTRALINE_OPTIONS) {
+          add({
+            id: `hl.${o.value}`,
+            group: 'Compare',
+            title: o.label,
+            checked: (options.intraline ?? 'word') === o.value,
+            run: () => setOptions({ ...options, intraline: o.value }),
+          });
+        }
+      }
+      add({
+        id: 'cmp.case',
+        group: 'Compare',
+        title: 'Ignore case',
+        checked: !!options.ignoreCase,
+        run: () => setOptions({ ...options, ignoreCase: !options.ignoreCase }),
+      });
+      add({
+        id: 'cmp.eol',
+        group: 'Compare',
+        title: 'Compare line endings',
+        keywords: 'crlf lf newline',
+        checked: options.lineEndings === 'preserve',
+        run: () => setOptions({ ...options, lineEndings: options.lineEndings === 'preserve' ? 'normalize' : 'preserve' }),
+      });
+    }
+    const exportTitles: Record<ExportAction, string> = {
+      'copy-patch': 'Copy unified diff',
+      'copy-original': 'Copy original text',
+      'copy-modified': 'Copy modified text',
+      'download-diff': 'Download .diff',
+      'download-patch': 'Download .patch',
+      'download-report': 'Export statistics (JSON)',
+    };
+    for (const [action, title] of Object.entries(exportTitles) as Array<[ExportAction, string]>) {
+      add({
+        id: `export.${action}`,
+        group: 'Export',
+        title,
+        disabled: !result || (PATCH_ACTIONS.has(action) && !result.changes.length),
+        run: () => void runExport(action),
+      });
+    }
+    if (languageSettable) {
+      for (const o of languageOptions) {
+        add({
+          id: `lang.${o.value}`,
+          group: 'Language',
+          title: o.label,
+          searchOnly: true,
+          checked: (languageSetting === 'auto' ? 'auto' : language) === o.value,
+          run: () => setLanguage(o.value),
+        });
+      }
+    }
+    return cmds;
+  };
+
+  /** Items for "Go to line": `:42`, `:L42` (original), `:R10-20` (modified range). */
+  const lineItems = (rest: string): { items: PaletteItem[]; hint: string } => {
+    const hint = 'Type a line number: :42, :L42 for the original side, :R10-20 for a range';
+    const m = /^([lrom])?\s*(\d+)(?:\s*[-–:,]\s*[lrom]?(\d+))?$/i.exec(rest);
+    if (!m || !result) return { items: [], hint };
+    const letter = m[1]?.toLowerCase();
+    const sides: DiffSide[] = letter === 'l' || letter === 'o' ? ['original'] : letter ? ['modified'] : ['modified', 'original'];
+    const a = Number(m[2]);
+    const b = m[3] ? Number(m[3]) : a;
+    const start = Math.min(a, b);
+    const end = Math.max(a, b);
+    const items = sides.map((side): PaletteItem => {
+      const lines = (side === 'original' ? result.original : result.modified).lines;
+      const ok = start >= 1 && start <= lines.length;
+      const preview = ok ? lines[start - 1].trim() : '';
+      return {
+        id: `line.${side}`,
+        group: 'Go to',
+        title: `${sideName(side)} ${start === end ? `line ${start}` : `lines ${start}–${end}`}`,
+        detail: ok ? (preview.length > 48 ? `${preview.slice(0, 47)}…` : preview) : `only ${lines.length.toLocaleString('en-US')} lines`,
+        disabled: !ok,
+        run: () => selectLines({ side, start, end }, true),
+      };
+    });
+    return { items, hint };
+  };
+
+  /** Items for "Go to difference": every change with its line ranges. */
+  const differenceItems = (rest: string): { items: PaletteItem[]; hint: string } => {
+    const all: PaletteCommand[] = (result?.changes ?? []).map((c) => ({
+      id: `diff.${c.index}`,
+      group: c.kind === 'added' ? 'Added' : c.kind === 'removed' ? 'Removed' : 'Modified',
+      title: `Difference ${c.index + 1}`,
+      detail: `L${span(c.oldStart, c.oldCount)} → R${span(c.newStart, c.newCount)}`,
+      checked: c.index === activeChange,
+      run: () => goToChange(c.index),
+    }));
+    const hint = all.length ? 'Type a number or a kind (added, removed, modified)' : 'No differences';
+    if (/^\d+$/.test(rest)) return { items: all.filter((c) => c.title.slice(11).startsWith(rest)), hint };
+    return { items: filterCommands(all, rest), hint };
+  };
+
+  const paletteContent = (q: string): { items: PaletteItem[]; hint?: string } => {
+    if (q.startsWith(':')) return lineItems(q.slice(1).trim());
+    if (q.startsWith('#')) return differenceItems(q.slice(1).trim());
+    const cmds = buildCommands();
+    if (!q.trim()) {
+      const recent = recentCommands.flatMap((id) => cmds.filter((c) => c.id === id && !c.disabled));
+      const rest = cmds.filter((c) => !c.searchOnly && !recent.includes(c));
+      return { items: [...recent, ...rest], hint: ': go to line · # difference' };
+    }
+    return { items: filterCommands(cmds, q), hint: ': go to line · # difference' };
+  };
+
+  const closePalette = (ran?: PaletteItem) => {
+    setPalette({ open: false, query: '' });
+    const opener = paletteOpener.current;
+    if (opener && opener.isConnected && rootRef.current?.contains(opener)) opener.focus();
+    else viewRef.current?.focus();
+    if (!ran) return;
+    if (!ran.id.startsWith('line.') && !ran.id.startsWith('diff.')) {
+      setRecentCommands((r) => [ran.id, ...r.filter((id) => id !== ran.id)].slice(0, MAX_RECENT));
+    }
+    ran.run();
   };
 
   const header =
@@ -888,8 +1326,17 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
               )}
             </span>
           )}
-          {(toolbarOn('search') || toolbarOn('export')) && (
+          {(toolbarOn('search') || toolbarOn('export') || toolbarOn('commands')) && (
             <span className="m2d-group">
+              {toolbarOn('commands') && (
+                <IconButton
+                  label={`Command palette (${key('commandPalette') ?? '⌘K'})`}
+                  pressed={palette.open}
+                  onClick={() => openCommandPalette()}
+                >
+                  <IconCommand />
+                </IconButton>
+              )}
               {toolbarOn('search') && (
                 <IconButton
                   label={`Search (${describeBinding(bindings?.openSearch[0] ?? 'Mod+F')})`}
@@ -975,7 +1422,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 
       {header}
 
-      <div className={cx('m2d-body', classNames.body)}>
+      <div className={cx('m2d-body', classNames.body)} onClick={onBodyClick} onMouseUp={onBodyMouseUp}>
         {error && !result ? (
           <div className="m2d-error" role="alert">
             Comparison failed: {error.message}
@@ -1032,7 +1479,13 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
               <span className="m2d-stat m2d-stat-del" title="Removed lines">
                 {`−${stats.deletions.toLocaleString('en-US')}`}
               </span>
-              <span className="m2d-status-item">{summary}</span>
+              {view !== 'unified' && result && result.changes.length > 0 ? (
+                <button type="button" className="m2d-status-btn" title="Go to difference…" onClick={() => openCommandPalette('#')}>
+                  {activeChange >= 0 ? `Diff ${activeChange + 1} / ${result.changes.length}` : summary}
+                </button>
+              ) : (
+                <span className="m2d-status-item">{summary}</span>
+              )}
               {stats.modifiedLines > 0 && (
                 <span className="m2d-status-item">
                   {stats.modifiedLines.toLocaleString('en-US')} modified {stats.modifiedLines === 1 ? 'line' : 'lines'}
@@ -1054,9 +1507,58 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
             </span>
           ))}
           {finalNewlineNote && <span className="m2d-status-item">{finalNewlineNote}</span>}
-          {result && <span className="m2d-status-item">{languageLabel(language)}</span>}
-          {result && eolNote && eolNote !== 'None' && <span className="m2d-status-item">{eolNote}</span>}
+          {selection ? (
+            <button
+              type="button"
+              className="m2d-status-btn m2d-status-selection"
+              title="Line selection (Esc clears) — more actions in the command palette"
+              onClick={() => openCommandPalette('Selection')}
+            >
+              <span className="m2d-side-tag">{sideLetter(selection.side)}</span>
+              {selection.start === selection.end
+                ? `Ln ${selection.start}`
+                : `Ln ${selection.start}–${selection.end} (${selection.end - selection.start + 1} lines)`}
+            </button>
+          ) : (
+            caret && (
+              <span className="m2d-status-item" title={`${sideName(caret.side)} side`}>
+                <span className="m2d-side-tag">{sideLetter(caret.side)}</span>
+                {`Ln ${caret.line}, Col ${caret.col}${caret.lines > 1 ? ` (${caret.lines} lines)` : ''}`}
+              </span>
+            )
+          )}
+          {result && indent && (
+            <span className="m2d-status-item" title="Indentation (detected)">
+              {describeIndent(indent)}
+            </span>
+          )}
+          {result && eolNote && eolNote !== 'None' && (
+            <span className="m2d-status-item" title="Line endings">
+              {eolNote}
+            </span>
+          )}
+          {result &&
+            (languageSettable ? (
+              <button type="button" className="m2d-status-btn" title="Change language" onClick={() => openCommandPalette('Language: ')}>
+                {languageLabel(language)}
+              </button>
+            ) : (
+              <span className="m2d-status-item">{languageLabel(language)}</span>
+            ))}
+          {result && duration !== null && (
+            <span className="m2d-status-item m2d-status-time" title="Comparison time">
+              {formatDuration(duration)}
+            </span>
+          )}
         </div>
+      )}
+      {palette.open && (
+        <CommandPalette
+          query={palette.query}
+          onQuery={(query) => setPalette((p) => ({ ...p, query }))}
+          getItems={paletteContent}
+          onClose={closePalette}
+        />
       )}
       <div className="m2d-sr-only" role="status" aria-live="polite">
         {announcement}
