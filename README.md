@@ -2,6 +2,8 @@
 
 A code and data diff viewer for React, built on a comparison engine that has no framework dependency.
 
+**[Live preview and docs →](https://www.m2toolkit.com/npm-packages/m2diff-viewer)** · [npm](https://www.npmjs.com/package/m2diff-viewer) · [GitHub](https://github.com/Mohsinziadev/m2diff_viewer)
+
 - **Three views.** Side-by-side (with synchronized scrolling and resizable panes), inline, and unified patch.
 - **Edit-aware alignment.** Edited lines are paired by similarity and highlighted at word or character level. Lines with no counterpart get filler rows, so unequal line counts never break alignment.
 - **Any language.** The comparison is language-agnostic. Syntax highlighting is a pluggable adapter: highlight.js (grammars lazy-loaded on demand) or Shiki. Anything unknown falls back to plain text.
@@ -70,7 +72,7 @@ const highlighter = createHighlightJsAdapter(); // create once, e.g. at module l
 <DiffViewer original={a} modified={b} modifiedName="main.rs" highlighter={highlighter} />;
 ```
 
-More complete, type-checked examples are in [`examples/`](examples): custom toolbar, Shiki, JSON/CSV, Web Worker, Next.js and headless usage. To run the interactive demo locally: `npm install && npm run dev`.
+More complete, type-checked examples are in [`examples/`](examples): custom toolbar, Shiki, JSON/CSV, Web Worker, Next.js and headless usage. Try everything live on the [preview page](https://www.m2toolkit.com/npm-packages/m2diff-viewer), or run it locally with `npm install && npm run dev`.
 
 ## Views
 
@@ -454,7 +456,7 @@ These are not implemented in 0.1:
 - **Multi-file comparison.** There is no file tree. Render one `DiffViewer` per file and use `DiffStats` for totals.
 - **Line wrapping.** Long lines scroll horizontally; fixed row heights keep virtualization exact.
 - **Partial fold expansion.** A fold expands in full, not N lines at a time.
-- **Editing in the viewer.** The viewer is read-only, with no merge or three-way views.
+- **Editing in the viewer.** The text is read-only. Whole changes can be copied across with the » « arrows (`onApplyChange`), but there is no free-form editing or three-way merge view.
 - **Framework adapters.** There are no Vue or Svelte components yet; the core engine is ready for them.
 - **Moved-block detection.** Moved code appears as a removal plus an addition.
 
@@ -463,11 +465,14 @@ These are not implemented in 0.1:
 ```bash
 npm install
 npm run dev          # demo with HMR (library consumed from source)
-npm test             # 132 tests: engine, JSON/CSV, adapters, React, SSR, axe, contrast
+npm test             # engine, JSON/CSV, adapters, React, SSR, axe, contrast
 npm run verify       # lint, format, typecheck, tests, build, publint + attw, size budgets, packed-tarball smoke test
 npm run bench        # engine benchmarks (after `npm run build`)
 npm run build:demo:dist  # demo built against dist/, exactly as an npm consumer would
+npm run build:site   # prerendered landing page → site-dist/ (see below)
 ```
+
+**Landing page.** The page at [m2toolkit.com/npm-packages/m2diff-viewer](https://www.m2toolkit.com/npm-packages/m2diff-viewer) is this repo's `demo/`, prerendered by `scripts/build-site.mjs` (shared verbatim with the other M2Toolkit packages). `site.config.json` holds the listing title, tagline, highlights and accent colour. M2Toolkit's `npm run sync:packages` runs `SITE_BASE=/npm-packages/m2diff-viewer/ npm run build:site` here and copies `site-dist/` into the site, so after changing the demo, `package.json` or `site.config.json`, re-sync from M2Toolkit. Keep one `<h1>`, a 15–65 character `<title>` and a 70–170 character meta description in `demo/index.html`.
 
 See [docs/architecture.md](docs/architecture.md) for the design and its trade-offs, and [CHANGELOG.md](CHANGELOG.md) for release notes.
 

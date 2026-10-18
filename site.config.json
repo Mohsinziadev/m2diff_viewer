@@ -1,0 +1,20 @@
+{
+  "slug": "m2diff-viewer",
+  "url": "https://www.m2toolkit.com/npm-packages/m2diff-viewer",
+  "siteName": "M2Toolkit",
+  "ogImage": "https://www.m2toolkit.com/opengraph-image",
+  "accent": "#0b8f6a",
+  "title": "Diff Viewer",
+  "tagline": "A code and data diff viewer for React, with an IDE-grade review experience.",
+  "highlights": [
+    "Side-by-side, inline and unified views with word-level highlighting and IDE-style change connectors",
+    "Command palette, line links, merge arrows, search, folding and an overview ruler",
+    "JSON & CSV structural diffs with ignored paths and keyed array or row matching",
+    "Framework-free comparison engine for Node, workers and CLIs; highlight.js or Shiki highlighting"
+  ],
+  "build": {
+    "root": "demo",
+    "viteConfig": "demo/vite.config.ts",
+    "serverEntry": "demo/entry-server.tsx"
+  }
+}

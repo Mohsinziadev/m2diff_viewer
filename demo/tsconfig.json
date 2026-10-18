@@ -18,7 +18,8 @@
       "m2diff-viewer/core": ["../src/core/index.ts"],
       "m2diff-viewer/highlight-js": ["../src/highlight-js/index.ts"],
       "m2diff-viewer/shiki": ["../src/shiki/index.ts"]
-    }
+    },
+    "resolveJsonModule": true
   },
-  "include": ["src", "vite.config.ts", "../examples"]
+  "include": ["src", "entry-server.tsx", "vite.config.ts", "../examples"]
 }

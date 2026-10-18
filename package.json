@@ -22,6 +22,14 @@
   ],
   "author": "Mohsin Zia <mohsinziadev@gmail.com>",
   "license": "MIT",
+  "homepage": "https://www.m2toolkit.com/npm-packages/m2diff-viewer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mohsinziadev/m2diff_viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mohsinziadev/m2diff_viewer/issues"
+  },
   "type": "module",
   "sideEffects": [
     "**/*.css"
@@ -99,7 +107,8 @@
     "check:package": "publint --strict && attw --pack . --profile node16 --exclude-entrypoints ./styles.css",
     "smoke": "node scripts/smoke-test.mjs",
     "verify": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run build && npm run check:package && npm run size && npm run smoke",
-    "prepublishOnly": "npm run verify"
+    "prepublishOnly": "npm run verify",
+    "build:site": "node scripts/build-site.mjs"
   },
   "dependencies": {
     "diff": "^9.0.0"
