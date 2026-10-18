@@ -595,6 +595,25 @@
 }
 .m2d-link-fill {
   fill: var(--m2d-link-bg);
+  pointer-events: visiblePainted;
+  cursor: pointer;
+  transition: fill 0.15s ease;
+}
+.m2d-link-hover .m2d-link-fill {
+  fill: color-mix(in srgb, var(--m2d-link-mark) 40%, var(--m2d-link-bg));
+}
+.m2d-link-hover .m2d-link-edge {
+  opacity: 1;
+  stroke-width: 1.5;
+}
+.m2d-link-flash .m2d-link-fill {
+  animation: m2d-band-flash 0.9s ease-out;
+}
+@keyframes m2d-band-flash {
+  0%,
+  25% {
+    fill: var(--m2d-link-mark);
+  }
 }
 .m2d-link-edge {
   fill: none;
@@ -622,6 +641,10 @@
 }
 .m2d-arrow {
   position: absolute;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -651,6 +674,18 @@ button.m2d-arrow:hover {
   background: var(--m2d-link-mark);
   color: var(--m2d-bg);
 }
+button.m2d-arrow.m2d-link-hover:not(:hover) {
+  background: color-mix(in srgb, var(--m2d-link-mark) 22%, transparent);
+}
+button.m2d-arrow-old:hover {
+  transform: translateX(2px);
+}
+button.m2d-arrow-new:hover {
+  transform: translateX(-2px);
+}
+button.m2d-arrow:active {
+  transform: scale(0.9);
+}
 button.m2d-arrow:focus-visible {
   outline: 2px solid var(--m2d-focus);
   outline-offset: -2px;
@@ -676,6 +711,7 @@ button.m2d-arrow:focus-visible {
   min-width: 100%;
 }
 .m2d-row {
+  position: relative;
   display: flex;
   height: var(--m2d-row-h);
   white-space: pre;
@@ -775,6 +811,39 @@ button.m2d-arrow:focus-visible {
 }
 .m2d-current .m2d-gutter {
   box-shadow: inset 3px 0 0 var(--m2d-accent);
+}
+
+/* Linked hover: the block under the pointer lights up in both panes, framed top and bottom. */
+.m2d-linked::after,
+.m2d-flash::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.m2d-linked::after {
+  background: color-mix(in srgb, var(--m2d-accent) 7%, transparent);
+}
+.m2d-linked-start::after {
+  border-top: 1px solid color-mix(in srgb, var(--m2d-accent) 55%, transparent);
+}
+.m2d-linked-end::after {
+  border-bottom: 1px solid color-mix(in srgb, var(--m2d-accent) 55%, transparent);
+}
+/* Landing flash after navigating to a change. */
+.m2d-flash::before {
+  background: color-mix(in srgb, var(--m2d-accent) 26%, transparent);
+  animation: m2d-flash 0.9s ease-out forwards;
+}
+@keyframes m2d-flash {
+  0%,
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 .m2d-match {
   background: var(--m2d-match-bg);
@@ -1324,6 +1393,10 @@ button.m2d-arrow:focus-visible {
   }
   .m2d-link-fill {
     fill: none;
+  }
+  .m2d-linked-start::after,
+  .m2d-linked-end::after {
+    border-color: Highlight;
   }
   .m2d-link-edge {
     stroke: CanvasText;

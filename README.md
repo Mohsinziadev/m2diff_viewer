@@ -76,7 +76,7 @@ More complete, type-checked examples are in [`examples/`](examples): custom tool
 
 | View | `view` value | Description |
 | --- | --- | --- |
-| Side-by-side | `split` | Original on the left, modified on the right. Vertical scrolling is always synchronized; horizontal sync can be toggled. Drag or use the arrow keys on the divider to resize. A connector strip between the panes links each change to its counterpart with » / « arrows (clickable when `onApplyChange` is set). |
+| Side-by-side | `split` | Original on the left, modified on the right. Vertical scrolling is always synchronized; horizontal sync can be toggled. Drag or use the arrow keys on the divider to resize. A connector strip between the panes links each change to its counterpart with » / « arrows (clickable when `onApplyChange` is set). Hovering a change frames it in both panes; clicking its band selects it. |
 | Inline | `inline` | A single column. Each change block shows its removed lines, then its added lines, with both line numbers. |
 | Unified patch | `unified` | The standard `diff -u` / `git diff` text, with file headers and `@@` hunk headers. |
 | Auto (default) | `auto` | Side-by-side when the viewer is at least 720px wide, inline below that. |

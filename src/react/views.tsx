@@ -11,6 +11,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type UIEvent,
 } from 'react';
@@ -126,13 +127,34 @@ function useWindow(count: number, rowHeight: number, virtualize: boolean) {
   return [safe, update] as const;
 }
 
+const prefersReducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
 function scrollIntoRange(el: HTMLElement | null, item: number, rowHeight: number) {
   if (!el) return;
   const y = item * rowHeight;
   const view = el.clientHeight || 400;
   if (y >= el.scrollTop + rowHeight && y + rowHeight <= el.scrollTop + view - rowHeight) return;
   const target = Math.max(0, y - view / 3);
-  el.scrollTop = target;
+  // Glide over short distances so the eye can follow; jump when far away or motion is reduced.
+  if (typeof el.scrollTo === 'function' && Math.abs(target - el.scrollTop) < view * 4 && !prefersReducedMotion()) {
+    el.scrollTo({ top: target, behavior: 'smooth' });
+  } else el.scrollTop = target;
+}
+
+/** The change index under a pointer event, from the nearest `data-change` attribute (-1 for none). */
+function changeAt(target: EventTarget | null): number {
+  const el = target instanceof Element ? target.closest('[data-change]') : null;
+  return el ? Number(el.getAttribute('data-change')) : -1;
+}
+
+/** Tracks which change block the pointer is over, for linked highlighting across panes and connectors. */
+function useHoverChange() {
+  const [hover, setHover] = useState(-1);
+  const handlers = {
+    onMouseOver: (e: ReactMouseEvent) => setHover(changeAt(e.target)),
+    onMouseLeave: () => setHover(-1),
+  };
+  return [hover, handlers] as const;
 }
 
 interface PaneProps {
@@ -223,6 +245,8 @@ export interface ViewProps {
   matchesByRow: Map<number, SearchMatch[]>;
   activeMatch: SearchMatch | null;
   activeChange: number;
+  /** Change briefly flashed after navigating to it (-1 for none). */
+  flashChange: number;
   onExpandFold: (id: number) => void;
   onViewport: (info: ViewportInfo) => void;
   labels: { original: string; modified: string };
@@ -248,6 +272,8 @@ export interface SplitViewProps extends ViewProps {
   connectors: boolean;
   /** Makes the arrows buttons that copy a change onto `target`. */
   onApplyChange?: (changeIndex: number, target: DiffSide) => void;
+  /** Called when a connector band is clicked. */
+  onSelectChange?: (changeIndex: number) => void;
 }
 
 /** Width in pixels of the strip between the panes when connectors are shown (matches `.m2d-connector`). */
@@ -259,6 +285,7 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
   const right = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const links = useRef<HTMLDivElement>(null);
+  const [hover, hoverHandlers] = useHoverChange();
   const skip = useRef<{ left: boolean; right: boolean }>({ left: false, right: false });
   const [win, update] = useWindow(items.length, rowHeight, virtualize);
 
@@ -315,14 +342,23 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
   }));
 
   // Resizable divider (pointer + keyboard).
+  // Dragging anywhere on the strip resizes; a click without movement on a band selects its change.
   const drag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || (e.target instanceof Element && e.target.closest('button'))) return;
     const box = body.current?.getBoundingClientRect();
-    if (!box || !box.width) return;
+    const clicked = changeAt(e.target);
+    const startX = e.clientX;
+    let moved = false;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    const move = (ev: PointerEvent) => onRatioChange(Math.min(0.85, Math.max(0.15, (ev.clientX - box.left) / box.width)));
+    const move = (ev: PointerEvent) => {
+      if (!box?.width || (!moved && Math.abs(ev.clientX - startX) < 3)) return;
+      moved = true;
+      onRatioChange(Math.min(0.85, Math.max(0.15, (ev.clientX - box.left) / box.width)));
+    };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      if (!moved && clicked >= 0) props.onSelectChange?.(clicked);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -359,12 +395,17 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
       );
       continue;
     }
-    leftRows.push(<SplitCell key={item.row} index={item.row} side="original" {...props} />);
-    rightRows.push(<SplitCell key={item.row} index={item.row} side="modified" {...props} />);
+    leftRows.push(<SplitCell key={item.row} index={item.row} side="original" hoverChange={hover} {...props} />);
+    rightRows.push(<SplitCell key={item.row} index={item.row} side="modified" hoverChange={hover} {...props} />);
   }
 
   return (
-    <div className="m2d-split" ref={body} style={{ gridTemplateColumns: `minmax(0, ${ratio}fr) auto minmax(0, ${1 - ratio}fr)` }}>
+    <div
+      className="m2d-split"
+      ref={body}
+      style={{ gridTemplateColumns: `minmax(0, ${ratio}fr) auto minmax(0, ${1 - ratio}fr)` }}
+      {...hoverHandlers}
+    >
       <Pane
         ref={left}
         count={items.length}
@@ -378,7 +419,7 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
       >
         {leftRows}
       </Pane>
-      <div className={cx('m2d-connector', connectors && 'm2d-connector-links')}>
+      <div className={cx('m2d-connector', connectors && 'm2d-connector-links')} onPointerDown={drag}>
         <div
           className="m2d-divider"
           role="separator"
@@ -388,7 +429,6 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
           aria-valuemax={85}
           aria-valuenow={Math.round(ratio * 100)}
           tabIndex={0}
-          onPointerDown={drag}
           onKeyDown={keyResize}
           onDoubleClick={() => onRatioChange(0.5)}
         />
@@ -401,6 +441,8 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
                 win={win}
                 rowHeight={rowHeight}
                 activeChange={props.activeChange}
+                hoverChange={hover}
+                flashChange={props.flashChange}
                 onApplyChange={props.onApplyChange}
               />
             </div>
@@ -424,6 +466,8 @@ export const SplitView = forwardRef<ViewHandle, SplitViewProps>(function SplitVi
   );
 });
 
+const linkedClass = (first: boolean, last: boolean) => cx('m2d-linked', first && 'm2d-linked-start', last && 'm2d-linked-end');
+
 // ——— change connectors ————————————————————————————————————————————————
 
 const LINK_KIND: Record<DiffChange['kind'], string> = {
@@ -445,6 +489,8 @@ function ChangeLinks({
   win,
   rowHeight,
   activeChange,
+  hoverChange,
+  flashChange,
   onApplyChange,
 }: {
   items: DisplayItem[];
@@ -452,6 +498,8 @@ function ChangeLinks({
   win: Window;
   rowHeight: number;
   activeChange: number;
+  hoverChange: number;
+  flashChange: number;
   onApplyChange?: (changeIndex: number, target: DiffSide) => void;
 }) {
   const w = CONNECTOR_WIDTH;
@@ -476,9 +524,14 @@ function ChangeLinks({
     }
     const lb = top + oldRows * rowHeight;
     const rb = top + newRows * rowHeight;
-    const kind = cx(LINK_KIND[change.kind], c === activeChange && 'm2d-link-current');
+    const kind = cx(
+      LINK_KIND[change.kind],
+      c === activeChange && 'm2d-link-current',
+      c === hoverChange && 'm2d-link-hover',
+      c === flashChange && 'm2d-link-flash',
+    );
     shapes.push(
-      <g key={c} className={kind}>
+      <g key={c} className={kind} data-change={c}>
         <path className="m2d-link-fill" d={`M0 ${top}H${w}V${rb}C${w / 2} ${rb} ${w / 2} ${lb} 0 ${lb}Z`} />
         <path
           className="m2d-link-edge"
@@ -496,6 +549,7 @@ function ChangeLinks({
           type="button"
           className={cx('m2d-arrow m2d-arrow-old', kind)}
           style={style}
+          data-change={c}
           title="Apply left to right"
           aria-label={`Difference ${c + 1}: replace modified ${newSpan} with original ${oldSpan}`}
           onClick={() => onApplyChange(c, 'modified')}
@@ -507,6 +561,7 @@ function ChangeLinks({
           type="button"
           className={cx('m2d-arrow m2d-arrow-new', kind)}
           style={style}
+          data-change={c}
           title="Apply right to left"
           aria-label={`Difference ${c + 1}: replace original ${oldSpan} with modified ${newSpan}`}
           onClick={() => onApplyChange(c, 'original')}
@@ -535,15 +590,30 @@ function ChangeLinks({
   );
 }
 
-function SplitCell(props: ViewProps & { index: number; side: DiffSide }) {
-  const { result, index, side, showLineNumbers, matchesByRow, activeMatch, activeChange, rowHeight } = props;
+function SplitCell(props: ViewProps & { index: number; side: DiffSide; hoverChange: number }) {
+  const { result, index, side, showLineNumbers, matchesByRow, activeMatch, activeChange, flashChange, hoverChange, rowHeight } = props;
   const row = result.rows[index];
   const line = side === 'original' ? row.old : row.new;
-  if (!line) return <div className={cx('m2d-row m2d-filler', props.rowClassName)} style={{ height: rowHeight }} aria-hidden="true" />;
+  if (!line) {
+    const c = row.change >= 0 ? result.changes[row.change] : undefined;
+    return (
+      <div
+        className={cx(
+          'm2d-row m2d-filler',
+          c && c.index === hoverChange && linkedClass(index === c.rowStart, index === c.rowEnd - 1),
+          props.rowClassName,
+        )}
+        style={{ height: rowHeight }}
+        data-change={c?.index}
+        aria-hidden="true"
+      />
+    );
+  }
   const kind = row.kind === 'equal' ? 'equal' : row.kind === 'modified' ? 'modified' : side === 'original' ? 'removed' : 'added';
   const tokens = (side === 'original' ? props.oldTokens : props.newTokens)?.get(line.number - 1);
   const ranges = side === 'original' ? row.oldRanges : row.newRanges;
   const sign = kind === 'equal' ? (row.ignored ? '≈' : '') : side === 'original' ? '−' : '+';
+  const change = row.change >= 0 ? result.changes[row.change] : undefined;
   return (
     <div
       className={cx(
@@ -551,11 +621,14 @@ function SplitCell(props: ViewProps & { index: number; side: DiffSide }) {
         `m2d-${kind}`,
         kind === 'modified' && (side === 'original' ? 'm2d-mod-old' : 'm2d-mod-new'),
         row.ignored && 'm2d-ignored',
-        row.change >= 0 && row.change === activeChange && 'm2d-current',
+        change && change.index === activeChange && 'm2d-current',
+        change && change.index === flashChange && 'm2d-flash',
+        change && change.index === hoverChange && linkedClass(index === change.rowStart, index === change.rowEnd - 1),
         props.rowClassName,
       )}
       style={{ height: rowHeight }}
       data-row={index}
+      data-change={change?.index}
     >
       <span
         className="m2d-gutter"
@@ -607,8 +680,9 @@ function useSingleScroller(count: number, rowHeight: number, virtualize: boolean
 }
 
 export const InlineView = forwardRef<ViewHandle, InlineViewProps>(function InlineView(props, ref) {
-  const { items, result, rowHeight, virtualize, showLineNumbers, matchesByRow, activeMatch, activeChange } = props;
+  const { items, result, rowHeight, virtualize, showLineNumbers, matchesByRow, activeMatch, activeChange, flashChange } = props;
   const { el, win, onScroll, handle } = useSingleScroller(items.length, rowHeight, virtualize, props.onViewport);
+  const [hover, hoverHandlers] = useHoverChange();
   useImperativeHandle(ref, () => handle);
   const g = Math.max(digits(result.original.lines.length), digits(result.modified.lines.length));
   const rows: ReactNode[] = [];
@@ -624,6 +698,10 @@ export const InlineView = forwardRef<ViewHandle, InlineViewProps>(function Inlin
     const lineNo = side === 'original' ? item.oldNumber! : item.newNumber!;
     const tokens = (side === 'original' ? props.oldTokens : props.newTokens)?.get(lineNo - 1);
     const kindClass = cx(`m2d-${item.kind}`, item.edited && 'm2d-edited');
+    const inChange = item.change >= 0;
+    const prev = items[i - 1];
+    const next = items[i + 1];
+    const sameChange = (other: InlineItem | undefined) => other?.type === 'line' && other.change === item.change;
     rows.push(
       <div
         key={`${item.kind}${item.row}`}
@@ -631,11 +709,14 @@ export const InlineView = forwardRef<ViewHandle, InlineViewProps>(function Inlin
           'm2d-row',
           kindClass,
           item.ignored && 'm2d-ignored',
-          item.change >= 0 && item.change === activeChange && 'm2d-current',
+          inChange && item.change === activeChange && 'm2d-current',
+          inChange && item.change === flashChange && 'm2d-flash',
+          inChange && item.change === hover && linkedClass(!sameChange(prev), !sameChange(next)),
           props.rowClassName,
         )}
         style={{ height: rowHeight }}
         data-row={item.row}
+        data-change={inChange ? item.change : undefined}
       >
         <span
           className="m2d-gutter m2d-gutter-2"
@@ -656,7 +737,7 @@ export const InlineView = forwardRef<ViewHandle, InlineViewProps>(function Inlin
     );
   }
   return (
-    <div className="m2d-single">
+    <div className="m2d-single" {...hoverHandlers}>
       <Pane
         ref={el}
         count={items.length}

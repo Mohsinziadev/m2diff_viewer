@@ -273,6 +273,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
   const [ratio, setRatio] = useState(0.5);
   const [width, setWidth] = useState(0);
   const [activeChange, setActiveChange] = useState(-1);
+  const [flashChange, setFlashChange] = useState(-1);
   const [activeHunk, setActiveHunk] = useState(-1);
   const [announcement, setAnnouncement] = useState('');
   const [copied, setCopied] = useState<ExportAction | null>(null);
@@ -488,6 +489,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
       const i = Math.max(0, Math.min(result.changes.length - 1, index));
       const change = result.changes[i];
       setActiveChange(i);
+      setFlashChange(i);
       reveal(change.rowStart);
       const where =
         change.kind === 'added'
@@ -500,6 +502,13 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
     },
     [result, view, hunkLines, reveal, onNavigate],
   );
+  // The landing flash is a one-shot highlight; clear it so the next visit can play it again.
+  useEffect(() => {
+    if (flashChange < 0) return;
+    const t = setTimeout(() => setFlashChange(-1), 900);
+    return () => clearTimeout(t);
+  }, [flashChange]);
+
   const canApply = !!onApplyChange && !!result && !result.original.truncated && !result.modified.truncated;
   const applyChangeTo = useCallback(
     (index: number, target: DiffSide) => {
@@ -707,6 +716,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
     matchesByRow,
     activeMatch,
     activeChange,
+    flashChange,
     onExpandFold: expandFold,
     onViewport,
     labels,
@@ -982,6 +992,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
             onRatioChange={setRatio}
             connectors={connectors}
             onApplyChange={canApply ? applyChangeTo : undefined}
+            onSelectChange={goToChange}
             {...viewProps}
           />
         ) : view === 'inline' ? (

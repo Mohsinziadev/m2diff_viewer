@@ -94,6 +94,32 @@ describe('<DiffViewer> change connectors', () => {
     expect(screen.getByRole('separator', { name: 'Resize panes' })).toBeInTheDocument();
   });
 
+  it('links a hovered block across both panes and its band', () => {
+    const { container } = render(<DiffViewer original={'a\nb\nc\n'} modified={'a\nB\nc\nd\n'} collapseUnchanged={false} />);
+    const [left] = rowsOf(container, '.m2d-pane-old').filter((r) => r.dataset.change === '0');
+    fireEvent.mouseOver(left);
+    const linked = [...container.querySelectorAll('.m2d-linked')];
+    expect(linked.map((r) => r.closest('.m2d-pane')?.classList.contains('m2d-pane-old'))).toEqual([true, false]);
+    expect(linked.every((r) => r.classList.contains('m2d-linked-start') && r.classList.contains('m2d-linked-end'))).toBe(true);
+    expect(container.querySelector('g[data-change="0"]')).toHaveClass('m2d-link-hover');
+    expect(container.querySelector('g[data-change="1"]')).not.toHaveClass('m2d-link-hover');
+    fireEvent.mouseLeave(container.querySelector('.m2d-split')!);
+    expect(container.querySelector('.m2d-linked')).toBeNull();
+  });
+
+  it('selects and flashes a change when its band is clicked', () => {
+    const onNavigate = vi.fn();
+    const { container } = render(
+      <DiffViewer original={'a\nb\nc\n'} modified={'a\nB\nc\nd\n'} collapseUnchanged={false} onNavigate={onNavigate} />,
+    );
+    const band = container.querySelector('g[data-change="1"] .m2d-link-fill')!;
+    fireEvent.pointerDown(band, { button: 0, clientX: 10 });
+    fireEvent.pointerUp(window, { clientX: 10 });
+    expect(onNavigate).toHaveBeenLastCalledWith(expect.objectContaining({ changeIndex: 1 }));
+    expect(container.querySelector('.m2d-pane-new [data-change="1"]')).toHaveClass('m2d-current', 'm2d-flash');
+    expect(container.querySelector('g[data-change="1"]')).toHaveClass('m2d-link-current', 'm2d-link-flash');
+  });
+
   it('applies a change in either direction through onApplyChange', async () => {
     const onApplyChange = vi.fn();
     const { container } = render(
