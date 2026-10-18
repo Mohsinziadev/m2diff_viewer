@@ -231,7 +231,7 @@ const yamlFormat: StructuredFormat = {
 | `m2diff-viewer/core` | The comparison engine: text, JSON, CSV, patch, search, folding, worker helpers | nothing (no React, no DOM) |
 | `m2diff-viewer/highlight-js` | `createHighlightJsAdapter` | `highlight.js` 11 |
 | `m2diff-viewer/shiki` | `createShikiAdapter` | a Shiki highlighter you create |
-| `m2diff-viewer/styles.css` | The stylesheet (about 4.9 kB gzip) | |
+| `m2diff-viewer/styles.css` | The stylesheet (about 6.2 kB gzip) | |
 
 All entries ship ESM and CommonJS builds with type declarations and source maps. Modules are preserved, so bundlers tree-shake unused parts.
 

@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Line links: click line numbers to select (shift-click extends); `selection`/`onSelectionChange` props and `syncHash` for GitHub-style `#L12` / `#R10-R20` URLs.
 - IDE-style status bar: `Diff 2 / 5` picker, cursor `Ln, Col`, line selection, detected indentation (`detectIndent` in core), clickable language and comparison time (`useDiff` now returns `duration`).
 - Landing page at [m2toolkit.com/npm-packages/m2diff-viewer](https://www.m2toolkit.com/npm-packages/m2diff-viewer): the demo is now a prerendered, Warp-style page with the live playground, quick start, API reference and FAQ (`npm run build:site`). `homepage`, `repository` and `bugs` are set in `package.json`.
+- Size budgets raised to cover the new review features: `<DiffViewer>` 27.5 kB, `<JsonDiffViewer>` 33.5 kB and `styles.css` 6.75 kB gzip (measured 26.5, 32.3 and 6.2 kB).
 - `onApplyChange` on `<DiffViewer>` turns the arrows into buttons that copy a change to the other side; `applyChange(result, index, target)` in `m2diff-viewer/core` computes the new text.
 
 ## 0.1.0

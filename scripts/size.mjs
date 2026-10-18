@@ -15,8 +15,9 @@ const cases = [
   { name: 'computeDiff + createUnifiedPatch', code: `export { computeDiff, createUnifiedPatch } from '../dist/core/index.js';`, budget: 6 },
   { name: 'diffJson', code: `export { diffJson } from '../dist/core/index.js';`, budget: 6 },
   { name: 'diffCsv', code: `export { diffCsv } from '../dist/core/index.js';`, budget: 4 },
-  { name: '<DiffViewer>', code: `export { DiffViewer } from '../dist/react/index.js';`, budget: 22 },
-  { name: '<JsonDiffViewer>', code: `export { JsonDiffViewer } from '../dist/react/index.js';`, budget: 28 },
+  // Raised for the connectors, command palette, line links and IDE status bar (+4.5 kB).
+  { name: '<DiffViewer>', code: `export { DiffViewer } from '../dist/react/index.js';`, budget: 27.5 },
+  { name: '<JsonDiffViewer>', code: `export { JsonDiffViewer } from '../dist/react/index.js';`, budget: 33.5 },
   { name: '<CsvDiffViewer>', code: `export { CsvDiffViewer } from '../dist/react/index.js';`, budget: 7 },
   {
     name: 'createHighlightJsAdapter (+ hljs core)',
@@ -56,10 +57,11 @@ for (const c of cases) {
 }
 const css = await readFile(resolve(root, 'dist/styles.css'));
 const cssGz = gzipSync(css).length;
-const cssOk = cssGz / 1024 <= 5.5;
+const cssBudget = 6.75;
+const cssOk = cssGz / 1024 <= cssBudget;
 failed ||= !cssOk;
 rows.push(
-  `${cssOk ? '✓' : '✗'} ${'styles.css'.padEnd(42)} ${kb(css.length).padStart(7)} kB min  ${kb(cssGz).padStart(6)} kB gzip  (budget 5.5 kB)`,
+  `${cssOk ? '✓' : '✗'} ${'styles.css'.padEnd(42)} ${kb(css.length).padStart(7)} kB min  ${kb(cssGz).padStart(6)} kB gzip  (budget ${cssBudget} kB)`,
 );
 await rm(tmp, { recursive: true, force: true });
 console.log(rows.join('\n'));
