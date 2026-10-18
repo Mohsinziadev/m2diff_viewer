@@ -6,11 +6,14 @@ on:
   pull_request:
 
 jobs:
+  # The dev toolchain (Vitest 5, jsdom 30 → undici 8) needs Node 22+: undici uses zlib zstd APIs
+  # that Node 20 doesn't have.
   verify:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node: [20, 22]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -20,3 +23,24 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: npm run build:demo:dist
+
+  # The published package itself has no such requirement. Build it with the toolchain, then check the
+  # packed tarball (install, type-check examples, server-render ESM + CJS, run the engine) on older Node.
+  runtime:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --version && node scripts/smoke-test.mjs

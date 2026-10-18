@@ -462,6 +462,8 @@ These are not implemented in 0.1:
 
 ## Development
 
+Development needs Node 22 or newer (Vitest 5 and jsdom 30 require it). The published package doesn't: CI also installs the packed tarball on Node 20 and runs the smoke test there.
+
 ```bash
 npm install
 npm run dev          # demo with HMR (library consumed from source)
